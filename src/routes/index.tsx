@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { summarizeNotes, type ActionItem, type SummaryResult } from "@/lib/summarize.functions";
+import { startRecording, transcribe, type Recorder } from "@/lib/recorder";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -43,6 +44,47 @@ function Index() {
   const [result, setResult] = useState<SummaryResult | null>(null);
   const [checked, setChecked] = useState<boolean[]>([]);
   const [copied, setCopied] = useState(false);
+  const [recorder, setRecorder] = useState<Recorder | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!recorder) return;
+    setSeconds(0);
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [recorder]);
+
+  const startVoice = async () => {
+    setVoiceError(null);
+    try {
+      setRecorder(await startRecording());
+    } catch {
+      setVoiceError("Microphone access is needed to record.");
+    }
+  };
+
+  const stopVoice = async () => {
+    if (!recorder) return;
+    const blob = await recorder.stop();
+    setRecorder(null);
+    setTranscribing(true);
+    try {
+      const text = await transcribe(blob);
+      if (text.trim()) {
+        setNotes((prev) => (prev.trim() ? `${prev.trim()}\n\n${text.trim()}` : text.trim()));
+      } else {
+        setVoiceError("Nothing was picked up — try recording again.");
+      }
+    } catch (e) {
+      setVoiceError((e as Error).message);
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const mmss = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 
   const run = useServerFn(summarizeNotes);
   const mutation = useMutation({
@@ -90,12 +132,40 @@ function Index() {
             Paste the messy transcript; get a clean, shareable set of index cards.
           </p>
 
-          <label
-            htmlFor="notes"
-            className="mt-4 block text-[13px] font-medium text-ink"
-          >
-            Raw notes
-          </label>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <label htmlFor="notes" className="block text-[13px] font-medium text-ink">
+              Raw notes
+            </label>
+            <button
+              type="button"
+              disabled={transcribing}
+              onClick={recorder ? stopVoice : startVoice}
+              aria-label={recorder ? "Stop recording" : "Record with microphone"}
+              className={
+                recorder
+                  ? "flex h-9 items-center gap-2 rounded-xl bg-destructive px-3 text-[12px] font-medium text-paper"
+                  : "flex h-9 items-center gap-2 rounded-xl bg-white px-3 text-[12px] font-medium text-muted-foreground outline-1 -outline-offset-1 outline-line transition-colors hover:text-ink disabled:opacity-60"
+              }
+            >
+              <span
+                className={
+                  recorder
+                    ? "size-2 animate-pulse rounded-full bg-paper"
+                    : "size-2 rounded-full bg-accent-blue"
+                }
+              />
+              {transcribing
+                ? "Transcribing…"
+                : recorder
+                  ? `Stop · ${mmss}`
+                  : "Record"}
+            </button>
+          </div>
+          {voiceError && (
+            <p className="mt-2 rounded-xl bg-destructive/8 p-3 text-[12px] leading-relaxed text-destructive outline-1 -outline-offset-1 outline-destructive/20">
+              {voiceError}
+            </p>
+          )}
           <textarea
             id="notes"
             value={notes}
