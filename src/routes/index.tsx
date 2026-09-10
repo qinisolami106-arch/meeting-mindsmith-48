@@ -132,12 +132,40 @@ function Index() {
             Paste the messy transcript; get a clean, shareable set of index cards.
           </p>
 
-          <label
-            htmlFor="notes"
-            className="mt-4 block text-[13px] font-medium text-ink"
-          >
-            Raw notes
-          </label>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <label htmlFor="notes" className="block text-[13px] font-medium text-ink">
+              Raw notes
+            </label>
+            <button
+              type="button"
+              disabled={transcribing}
+              onClick={recorder ? stopVoice : startVoice}
+              aria-label={recorder ? "Stop recording" : "Record with microphone"}
+              className={
+                recorder
+                  ? "flex h-9 items-center gap-2 rounded-xl bg-destructive px-3 text-[12px] font-medium text-paper"
+                  : "flex h-9 items-center gap-2 rounded-xl bg-white px-3 text-[12px] font-medium text-muted-foreground outline-1 -outline-offset-1 outline-line transition-colors hover:text-ink disabled:opacity-60"
+              }
+            >
+              <span
+                className={
+                  recorder
+                    ? "size-2 animate-pulse rounded-full bg-paper"
+                    : "size-2 rounded-full bg-accent-blue"
+                }
+              />
+              {transcribing
+                ? "Transcribing…"
+                : recorder
+                  ? `Stop · ${mmss}`
+                  : "Record"}
+            </button>
+          </div>
+          {voiceError && (
+            <p className="mt-2 rounded-xl bg-destructive/8 p-3 text-[12px] leading-relaxed text-destructive outline-1 -outline-offset-1 outline-destructive/20">
+              {voiceError}
+            </p>
+          )}
           <textarea
             id="notes"
             value={notes}
