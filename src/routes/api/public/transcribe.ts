@@ -29,7 +29,7 @@ export const Route = createFileRoute("/api/public/transcribe")({
             { status: 400, headers: { "Content-Type": "application/json" } },
           );
         }
-        if (file.size > 14 * 1024 * 1024) {
+        if (file.size > 24 * 1024 * 1024) {
           return new Response(
             JSON.stringify({ error: "That recording is too long. Record a shorter clip." }),
             { status: 413, headers: { "Content-Type": "application/json" } },
@@ -37,7 +37,7 @@ export const Route = createFileRoute("/api/public/transcribe")({
         }
 
         const upstream = new FormData();
-        upstream.append("model", "google/gemini-3.5-transcribe");
+        upstream.append("model", "openai/gpt-4o-transcribe");
         upstream.append("file", file, "recording.wav");
 
         const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/transcriptions", {
