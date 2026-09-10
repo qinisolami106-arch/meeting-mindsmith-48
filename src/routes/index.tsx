@@ -1,9 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { summarizeNotes, type ActionItem, type SummaryResult } from "@/lib/summarize.functions";
+import {
+  summarizeNotes,
+  listMeetings,
+  deleteMeeting,
+  type Meeting,
+} from "@/lib/meetings.functions";
 import { startRecording, transcribe, type Recorder } from "@/lib/recorder";
+import { SummaryCards } from "@/components/SummaryCards";
+import { AppHeader } from "@/components/AppHeader";
+import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -35,15 +43,27 @@ const TONES = [
 
 type Tone = (typeof TONES)[number]["id"];
 
+const TEMPLATE = `Meeting: 
+Date: 
+Start time: 
+End time: 
+Attendees: 
+Agenda:
+1. 
+2. 
+3. 
+Notes:
+- `;
+
 const SAMPLE =
   "Kickoff for the Q3 launch. Priya owns the pricing doc by Friday. We're dropping the self-serve tier for now. Marcus is chasing the enterprise SSO spec — flagged a security concern with token refresh. Need a demo script before the 14th. Decided to keep onboarding at three steps. Budget is capped at 40k.";
 
 function Index() {
+  const { user, loading } = useAuth();
+  const queryClient = useQueryClient();
   const [notes, setNotes] = useState(SAMPLE);
   const [tone, setTone] = useState<Tone>("professional");
-  const [result, setResult] = useState<SummaryResult | null>(null);
-  const [checked, setChecked] = useState<boolean[]>([]);
-  const [copied, setCopied] = useState(false);
+  const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [recorder, setRecorder] = useState<Recorder | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -73,7 +93,7 @@ function Index() {
     try {
       const text = await transcribe(blob);
       if (text.trim()) {
-        setNotes((prev) => (prev.trim() ? `${prev.trim()}\n\n${text.trim()}` : text.trim()));
+        setNotes((prev) => (prev.trim() ? `${prev.trim()}\n${text.trim()}` : text.trim()));
       } else {
         setVoiceError("Nothing was picked up — try recording again.");
       }
@@ -87,42 +107,50 @@ function Index() {
   const mmss = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 
   const run = useServerFn(summarizeNotes);
+  const fetchHistory = useServerFn(listMeetings);
+  const removeMeeting = useServerFn(deleteMeeting);
+
+  const history = useQuery({
+    queryKey: ["meetings"],
+    queryFn: () => fetchHistory(),
+    enabled: Boolean(user),
+  });
+
   const mutation = useMutation({
     mutationFn: (vars: { notes: string; tone: Tone }) => run({ data: vars }),
-    onSuccess: (data: SummaryResult) => {
-      setResult(data);
-      setChecked(data.actionItems.map(() => false));
+    onSuccess: (data: Meeting) => {
+      setMeeting(data);
+      queryClient.invalidateQueries({ queryKey: ["meetings"] });
     },
   });
 
-  const copyEmail = async () => {
-    if (!result) return;
-    await navigator.clipboard.writeText(`Subject: ${result.emailSubject}\n\n${result.emailBody}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-  };
-
-  const openCount = checked.filter((c) => !c).length;
+  const remove = useMutation({
+    mutationFn: (id: string) => removeMeeting({ data: { id } }),
+    onSuccess: (_r, id) => {
+      if (meeting?.id === id) setMeeting(null);
+      queryClient.invalidateQueries({ queryKey: ["meetings"] });
+    },
+  });
 
   return (
     <div className="min-h-screen bg-paper text-ink antialiased selection:bg-accent-blue/15">
-      <header className="sticky top-0 z-20 border-b border-line bg-paper/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
-          <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent-blue/10">
-            <span className="font-mono text-xs font-medium text-accent-blue">¶</span>
-          </div>
-          <div className="leading-tight">
-            <p className="font-display text-[15px] font-semibold tracking-tight">
-              AI Workplace Productivity Assistant
-            </p>
-            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
-              Note triage · v0.3
-            </p>
-          </div>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="mx-auto max-w-3xl px-4 pt-5 pb-14">
+        {!loading && !user && (
+          <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)]">
+            <p className="flex-1 text-pretty text-sm text-muted-foreground">
+              Sign in to summarize meetings and keep every one of them in your history.
+            </p>
+            <Link
+              to="/auth"
+              className="grid h-10 place-items-center rounded-xl bg-ink px-4 text-sm font-medium text-paper"
+            >
+              Sign in
+            </Link>
+          </div>
+        )}
+
         <section className="animate-rise">
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">(a) Capture</p>
           <h1 className="mt-1 text-balance font-display text-2xl font-semibold tracking-tight">
@@ -132,34 +160,41 @@ function Index() {
             Paste the messy transcript; get a clean, shareable set of index cards.
           </p>
 
-          <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <label htmlFor="notes" className="block text-[13px] font-medium text-ink">
               Raw notes
             </label>
-            <button
-              type="button"
-              disabled={transcribing}
-              onClick={recorder ? stopVoice : startVoice}
-              aria-label={recorder ? "Stop recording" : "Record with microphone"}
-              className={
-                recorder
-                  ? "flex h-9 items-center gap-2 rounded-xl bg-destructive px-3 text-[12px] font-medium text-paper"
-                  : "flex h-9 items-center gap-2 rounded-xl bg-white px-3 text-[12px] font-medium text-muted-foreground outline-1 -outline-offset-1 outline-line transition-colors hover:text-ink disabled:opacity-60"
-              }
-            >
-              <span
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setNotes((prev) => (prev.trim() ? `${TEMPLATE}\n${prev.trim()}` : TEMPLATE))
+                }
+                className="h-9 rounded-xl bg-white px-3 text-[12px] font-medium text-muted-foreground outline-1 -outline-offset-1 outline-line transition-colors hover:text-ink"
+              >
+                Use meeting template
+              </button>
+              <button
+                type="button"
+                disabled={transcribing}
+                onClick={recorder ? stopVoice : startVoice}
+                aria-label={recorder ? "Stop recording" : "Record with microphone"}
                 className={
                   recorder
-                    ? "size-2 animate-pulse rounded-full bg-paper"
-                    : "size-2 rounded-full bg-accent-blue"
+                    ? "flex h-9 items-center gap-2 rounded-xl bg-destructive px-3 text-[12px] font-medium text-paper"
+                    : "flex h-9 items-center gap-2 rounded-xl bg-white px-3 text-[12px] font-medium text-muted-foreground outline-1 -outline-offset-1 outline-line transition-colors hover:text-ink disabled:opacity-60"
                 }
-              />
-              {transcribing
-                ? "Transcribing…"
-                : recorder
-                  ? `Stop · ${mmss}`
-                  : "Record"}
-            </button>
+              >
+                <span
+                  className={
+                    recorder
+                      ? "size-2 animate-pulse rounded-full bg-paper"
+                      : "size-2 rounded-full bg-accent-blue"
+                  }
+                />
+                {transcribing ? "Transcribing…" : recorder ? `Stop · ${mmss}` : "Record"}
+              </button>
+            </div>
           </div>
           {voiceError && (
             <p className="mt-2 rounded-xl bg-destructive/8 p-3 text-[12px] leading-relaxed text-destructive outline-1 -outline-offset-1 outline-destructive/20">
@@ -170,7 +205,7 @@ function Index() {
             id="notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="mt-1.5 h-40 w-full resize-none rounded-2xl bg-white px-3.5 py-3 text-sm leading-relaxed text-ink shadow-[var(--shadow-soft)] outline-1 -outline-offset-1 outline-line placeholder:text-faint focus:outline-2 focus:outline-accent-blue/50"
+            className="mt-1.5 h-48 w-full resize-none rounded-2xl bg-white px-3.5 py-3 text-sm leading-relaxed text-ink shadow-[var(--shadow-soft)] outline-1 -outline-offset-1 outline-line placeholder:text-faint focus:outline-2 focus:outline-accent-blue/50"
             placeholder="Paste meeting notes, transcript, or scattered thoughts…"
           />
 
@@ -195,7 +230,7 @@ function Index() {
 
           <button
             type="button"
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || !user}
             onClick={() => mutation.mutate({ notes, tone })}
             className="mt-4 h-12 w-full rounded-2xl bg-ink text-sm font-medium text-paper shadow-[var(--shadow-soft)] transition-opacity disabled:opacity-60"
           >
@@ -209,103 +244,67 @@ function Index() {
           )}
         </section>
 
-        {result && (
+        {meeting && (
           <section className="mt-7">
             <div className="flex items-center justify-between">
               <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">
                 (b) Filed record
               </p>
-              <p className="font-mono text-[10px] text-faint">3 cards · just now</p>
+              <p className="font-mono text-[10px] text-faint">{meeting.title}</p>
             </div>
+            <SummaryCards meeting={meeting} />
+          </section>
+        )}
 
-            <div className="mt-3 space-y-3">
-              <article className="animate-rise rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)]">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-[15px] font-semibold tracking-tight">
-                    Key Discussion Highlights
-                  </h2>
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-accent-blue">
-                    Highlights
-                  </span>
-                </div>
-                <ul className="mt-3 space-y-2.5 text-sm text-ink">
-                  {result.highlights.map((h, i) => (
-                    <li key={i} className="flex gap-2.5">
-                      <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-accent-blue" />
-                      {h}
-                    </li>
-                  ))}
-                </ul>
-              </article>
-
-              <article
-                className="animate-rise rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)]"
-                style={{ animationDelay: "80ms" }}
-              >
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-[15px] font-semibold tracking-tight">
-                    Action Items &amp; Next Steps
-                  </h2>
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-accent-blue">
-                    {openCount} open
-                  </span>
-                </div>
-                <div className="mt-3 space-y-3 text-sm">
-                  {result.actionItems.map((a: ActionItem, i) => (
-                    <label key={i} className="flex cursor-pointer items-center gap-3">
-                      <input
-                        type="checkbox"
-                        className="peer sr-only"
-                        checked={checked[i] ?? false}
-                        onChange={() =>
-                          setChecked((prev) => prev.map((c, j) => (j === i ? !c : c)))
-                        }
-                      />
-                      <span
-                        className={
-                          checked[i]
-                            ? "grid size-5 shrink-0 place-items-center rounded-md bg-accent-blue"
-                            : "grid size-5 shrink-0 place-items-center rounded-md bg-white outline-1 -outline-offset-1 outline-line"
-                        }
-                      >
-                        {checked[i] && <span className="text-[11px] leading-none text-paper">✓</span>}
-                      </span>
-                      <span className={checked[i] ? "text-muted-foreground line-through" : ""}>
-                        {a.task}
-                      </span>
-                      {a.owner && (
-                        <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
-                          {a.owner}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              </article>
-
-              <article
-                className="animate-rise rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)]"
-                style={{ animationDelay: "160ms" }}
-              >
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-[15px] font-semibold tracking-tight">
-                    Drafted Follow-up Email
-                  </h2>
+        {user && (
+          <section className="mt-8">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">
+              (c) History
+            </p>
+            <h2 className="mt-1 font-display text-lg font-semibold tracking-tight">
+              Past meetings
+            </h2>
+            <div className="mt-3 space-y-2">
+              {history.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+              {history.data?.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Nothing filed yet — your summaries will collect here.
+                </p>
+              )}
+              {history.data?.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-3 rounded-2xl bg-white p-3.5 shadow-[var(--shadow-soft)]"
+                >
                   <button
                     type="button"
-                    onClick={copyEmail}
-                    className="font-mono text-[10px] uppercase tracking-wide text-accent-blue"
+                    onClick={() => {
+                      setMeeting(m);
+                      setNotes(m.notes);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="min-w-0 flex-1 text-left"
                   >
-                    {copied ? "Copied" : "Copy"}
+                    <p className="truncate text-sm font-medium text-ink">{m.title}</p>
+                    <p className="mt-0.5 font-mono text-[10px] uppercase tracking-wide text-faint">
+                      {new Date(m.createdAt).toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}{" "}
+                      · {m.tone}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove.mutate(m.id)}
+                    aria-label={`Delete ${m.title}`}
+                    className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-faint transition-colors hover:text-destructive"
+                  >
+                    Delete
                   </button>
                 </div>
-                <p className="mt-3 font-mono text-[11px] text-faint">
-                  Subject: {result.emailSubject}
-                </p>
-                <p className="mt-2 whitespace-pre-wrap text-pretty text-sm leading-relaxed text-muted-foreground">
-                  {result.emailBody}
-                </p>
-              </article>
+              ))}
             </div>
           </section>
         )}
