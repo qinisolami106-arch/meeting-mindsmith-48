@@ -1,8 +1,9 @@
 # Roadmap
 
-- [ ] Enable Cloud + sign-in (history saved to account)
-- [ ] Email the drafted follow-up to Qinisolami106@gmail.com
-- [ ] Swap transcription to a more accurate model (openai/gpt-4o-transcribe)
-- [ ] History panel: date, tone, meeting title; revisit past summaries
-- [ ] Meeting template: attendees, agenda items, start/end times auto-filled
-- [ ] Chat window (separate conversations, persisted) that feeds the summarizer
+- [x] Cloud + sign-in (email/password + Google); history saved to account
+- [x] More accurate voice-to-text (openai/gpt-4o-transcribe)
+- [x] History panel: date, tone and meeting title, reopen past meetings
+- [x] Meeting template: attendees, agenda, start/end times auto-filled
+- [x] Chat window with separate saved conversations feeding the summarizer
+- [ ] Send follow-up email to Qinisolami106@gmail.com — blocked: needs the one-time
+      email sending address setup (button is in place and reports this until then)
